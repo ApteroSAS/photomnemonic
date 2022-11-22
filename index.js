@@ -4,8 +4,8 @@ const { spawn } = require("child_process");
 
 const { urlAllowed } = require("./url-utils");
 
-function sleep(miliseconds = 100) {
-  return new Promise(resolve => setTimeout(resolve, miliseconds));
+function sleep(milliseconds = 100) {
+  return new Promise(resolve => setTimeout(resolve, milliseconds));
 }
 
 async function screenshot(url, fullscreen) {
@@ -57,11 +57,11 @@ async function screenshot(url, fullscreen) {
     Fetch.requestPaused(async event => {
       if (await urlAllowed(event.request.url)) {
         if (clientIsAvailable) {
-          Fetch.continueRequest({ requestId: event.requestId });
+          await Fetch.continueRequest({requestId: event.requestId});
         }
       } else {
         if (clientIsAvailable) {
-          Fetch.failRequest({
+          await Fetch.failRequest({
             requestId: event.requestId,
             errorReason: "AccessDenied"
           });
