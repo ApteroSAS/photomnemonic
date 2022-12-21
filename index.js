@@ -177,7 +177,7 @@ module.exports.handler = async function handler(event, context, callback) {
     }
   } catch (error) {
     console.error("Error capturing screenshot for", url, error);
-    return callback(error);
+    throw error;
   }
 
   return callback(null, {
