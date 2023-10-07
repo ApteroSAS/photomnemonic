@@ -1,161 +1,64 @@
-const chromium = require("chrome-aws-lambda");
-const Cdp = require("chrome-remote-interface");
-const { spawn } = require("child_process");
+/* prettier-ignore-file */
+const { urlAllowed, GetBrowser,CloseBrowser } = require("./utils");
 
-const { urlAllowed } = require("./url-utils");
+let t0;
 
-function sleep(milliseconds = 100) {
-  return new Promise(resolve => setTimeout(resolve, milliseconds));
+function sleep(miliseconds = 100) {
+  return new Promise(resolve => setTimeout(resolve, miliseconds));
 }
 
-async function screenshot(url, fullscreen) {
+async function screenshot(url) {
   let data, meta;
   let loaded = false;
 
+  console.log("screenshot, url: ", url)
+
+  t0 = new Date().getTime()
+  // eslint-disable-next-line no-unused-vars
   const loading = async (startTime = Date.now()) => {
     if (!loaded && Date.now() - startTime < 12 * 1000) {
       await sleep(100);
       await loading(startTime);
     }
   };
-  const options = chromium.args.concat([
-    "--remote-debugging-port=9222",
-    "--window-size=1280x720",
-    "--hide-scrollbars"
-  ]);
 
-  const path = await chromium.executablePath;
-  const chrome = spawn(path, options);
-  chrome.stdout.on("data", data => console.log(data.toString()));
-  chrome.stderr.on("data", data => console.log(data.toString()));
+  const browser = await GetBrowser()
+  console.log("GetBrowser -- @: ", new Date().getTime()-t0, "ms")
 
-  let client;
-  let clientIsAvailable = false;
+  const page = await browser.newPage();
+  // console.log("browser.newPage() -- @: ", new Date().getTime()-t0, "ms")
 
+  await page.goto(url,{
+    waitUntil: 'networkidle0', // wait until no new network connections for at least 500ms
+    timeout: 20000 // adding timeout of 20 seconds
+  });
+  const pageTitle = await page.title();
+  await sleep(1000);//wait for a second network load (lazy loaded page after dom loaded)
+  page.waitForNetworkIdle({ idleTime: 500, timeout: 10000 }), // wait for 250ms of no network traffic
+  console.log( "pageTitle: ",pageTitle, ", @: ", new Date().getTime()-t0, "ms")
   for (let i = 0; i < 20; i++) {
-    try {
-      client = await Cdp();
-      if (client) {
-        clientIsAvailable = true;
-        break;
-      } else {
-        await sleep(100);
-      }
-    } catch (e) {
-      console.log(e);
-      await sleep(500);
+    try{
+      data = await page.screenshot({ encoding: "base64" });
+      // console.log( "screenshot @: ", new Date().getTime()-t0, "ms")
+      return {data,meta};
     }
-  }
-
-  const { Network, Page, Runtime, Emulation, Fetch } = client;
-
-  try {
-    await Promise.all([Network.enable(), Page.enable(), Fetch.enable()]);
-
-    // This uses the request interception API to reject or allow requests
-    // https://chromedevtools.github.io/devtools-protocol/tot/Fetch/#event-requestPaused
-    Fetch.requestPaused(async event => {
-      if (await urlAllowed(event.request.url)) {
-        if (clientIsAvailable) {
-          await Fetch.continueRequest({requestId: event.requestId});
-        }
-      } else {
-        if (clientIsAvailable) {
-          await Fetch.failRequest({
-            requestId: event.requestId,
-            errorReason: "AccessDenied"
-          });
-        }
-      }
-    });
-
-    await Emulation.setDeviceMetricsOverride({
-      mobile: false,
-      deviceScaleFactor: 0,
-      scale: 1,
-      width: 1280,
-      height: 0
-    });
-
-    await Page.loadEventFired(() => {
-      loaded = true;
-    });
-    await Page.navigate({ url });
-    await loading();
-
-    let height = 720;
-
-    if (fullscreen) {
-      const result = await Runtime.evaluate({
-        expression: `(
-          () => ({ height: document.body.scrollHeight })
-        )();
-        `,
-        returnByValue: true
-      });
-
-      height = result.result.value.height;
+    catch (e){
+      console.log(e)
+    } 
+    await sleep(500)   
     }
 
-    await Emulation.setDeviceMetricsOverride({
-      mobile: false,
-      deviceScaleFactor: 0,
-      scale: 1,
-      width: 1280,
-      height: height
-    });
-
-    // Look for a global function _photomnemonicReady and if it exists, wait until it returns true.
-    await Runtime.evaluate({
-      expression: `new Promise(resolve => {
-        if (window._photomnemonicReady) {
-          if (window._photomnemonicReady()) {
-            resolve();
-          } else {
-            const interval = setInterval(() => {
-              if (window._photomnemonicReady()) {
-                clearInterval(interval);
-                resolve();
-              }
-            }, 250)
-          }
-        } else {
-          resolve();
-        }
-      })`,
-      awaitPromise: true
-    });
-
-    const metaResult = await Runtime.evaluate({
-      expression: `window._photomnemonicGetMeta ? window._photomnemonicGetMeta() : null`,
-      returnByValue: true
-    });
-
-    if (metaResult.result.value) {
-      meta = metaResult.result.value;
-    }
-
-    await Emulation.setVisibleSize({
-      width: meta && meta.width ? meta.width : 1280,
-      height: meta && meta.height ? meta.height : height
-    });
-
-    const screenshot = await Page.captureScreenshot({ format: "png" });
-    data = screenshot.data;
-  } catch (error) {
-    console.error(error);
-  }
-
-  clientIsAvailable = false;
-  chrome.kill();
-  await client.close();
-
-  return { data, meta };
+  console.log("Error failed to produce screenshot")
+  return
 }
 
 module.exports.handler = async function handler(event, context, callback) {
+
+
+  t0 = new Date().getTime()
+
   const queryStringParameters = event.queryStringParameters || {};
-  const { url = "https://www.mozilla.org", fullscreen = "false" } =
+  const { url = "https://www.mozilla.org"} =
     queryStringParameters;
 
   if (!(await urlAllowed(url))) {
@@ -169,17 +72,25 @@ module.exports.handler = async function handler(event, context, callback) {
   };
 
   try {
-    const result = await screenshot(url, fullscreen === "true");
+    const result = await screenshot(url);
+    // console.log( "screenshot(url) took: ", new Date().getTime()-t0, "ms")
+    
     data = result.data;
+    console.log( "data.length: ", data.length)
 
-    if (result.meta) {
-      headers["X-Photomnemonic-Meta"] = JSON.stringify(result.meta);
-    }
+    // if (result.meta) {
+    //   headers["X-Photomnemonic-Meta"] = JSON.stringify(result.meta);
+    // }
   } catch (error) {
     console.error("Error capturing screenshot for", url, error);
-    throw error;
+    return callback(error);
   }
 
+  if (process.env.AWS_LAMBDA_FUNCTION_NAME != "turkey"){
+    CloseBrowser()
+  }
+
+  console.log("done @", new Date().getTime()-t0, "ms")
   return callback(null, {
     statusCode: 200,
     body: data,

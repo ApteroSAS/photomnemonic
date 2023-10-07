@@ -1,38 +1,48 @@
 const lambda = require("./index");
-const express = require("express");
-const { Buffer } = require("buffer");
+var express = require('express');
+const utils = require('./utils')
 
-const app = express();
 
-app.get("/_health", (req, res) => {
-  res.send("1");
-});
+async function main() {
+  console.log("hello")
+  const browser= await utils.GetBrowser()
+  
+  // const test=async () => {
+  //   await new Promise(r => setTimeout(r, 5555));
+  //   browser.disconnect();
+  // }
+  // test()
 
-app.get("/screenshot", (req, res) => {
-  console.log(req.query);
-  (async () => {
-    try {
-      await lambda.handler(
-        { queryStringParameters: req.query },
+  serve(5000)
+}
+
+
+
+function serve(port=5000){
+  var app = express();
+  app.get('/_healthz', function (req, res) {
+    res.send('1');
+  });
+  app.get('/screenshot', function (req, res) {
+    console.log(req.query)
+  
+    lambda.handler(
+        {queryStringParameters: req.query}, 
         null,
-        async (something, callback) => {
-          console.log("callback status: ", callback.statusCode);
-          if (callback.isBase64Encoded) {
-            callback.body = Buffer.from(callback.body, "base64");
-          }
-          res
-            .status(callback.statusCode)
-            .header(callback.headers)
-            .send(callback.body);
+        async function (something, callback){
+            // console.log("callback.body.length: ", callback.body.length)
+            if (callback.isBase64Encoded) {
+                callback.body = Buffer.from(callback.body, 'base64')
+            }
+            res.status(callback.statusCode).header(callback.headers).send(callback.body)
         }
-      );
-    } catch (e) {
-      console.error(e);
-      res.status(500).json(e);
-    }
-  })();
-});
+    )
+  });
+  app.listen(port, function () {
+    console.log('listening on : ',port);
+  });
+}
 
-app.listen(5000, () => {
-  console.log("listening on :5000");
-});
+
+
+main()
